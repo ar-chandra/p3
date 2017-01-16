@@ -28,16 +28,25 @@ prev_image_array = None
 
 
 #Org - 160x320x3
+imgsize = (160,320,3)
+
 #resize - 80% 
-imgsize = (128,256,3)
+#imgsize = (128,256,3)
+
+#resize - 60% 
+#imgsize = (96,192,3)
 
 #crop - 72x256x3
 crop_s = 40
 crop_e = 112
 
-#final
-final_input_shape = (72,256,3)
+#crop_s = 0
+#crop_e = 0
 
+#final
+#final_input_shape = (160,320,3)
+final_input_shape = (72,320,3)
+#final_input_shape = (56,192,3)
 
 @sio.on('telemetry')
 def telemetry(sid, data):
@@ -73,8 +82,14 @@ def telemetry(sid, data):
     steering_angle = float(model.predict(transformed_image_array, batch_size=1))
     
     # The driving model currently just outputs a constant throttle. Feel free to edit this.
-    throttle = 0.2
-    print(steering_angle, throttle)
+    throttle = 0.3
+    #print(steering_angle, throttle)
+    
+    #slow down on curves
+    if(float(speed) > 20 and (steering_angle < -0.1 or steering_angle > 0.1)):
+        print("reduce throttle")
+        throttle = 0
+    
     send_control(steering_angle, throttle)
 
 
@@ -83,8 +98,28 @@ def connect(sid, environ):
     print("connect ", sid)
     send_control(0, 0)
 
+s_1=0
+s_2=0
+s_3=0
 
 def send_control(steering_angle, throttle):
+    global s_1
+    global s_2
+    global s_3
+       
+    #smooth out steering
+    if(s_3>0.04 and abs(steering_angle-s_3) > 0.04):
+    #    print(steering_angle)
+        steering_angle = -0.5*(s_1+s_2+s_3)/8
+        print("steering correction",steering_angle)
+    #    throttle = throttle*0.1
+    else:
+        print("resume normal steering") 
+
+    s_1 = s_2
+    s_2 = s_3
+    s_3 = steering_angle
+   
     sio.emit("steer", data={
     'steering_angle': steering_angle.__str__(),
     'throttle': throttle.__str__()
