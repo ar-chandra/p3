@@ -15,7 +15,7 @@ from keras.optimizers import SGD, Adam, RMSprop
 from keras.layers import Dense, Dropout, Activation, Flatten, ELU, Lambda
 from keras.layers import Convolution2D, MaxPooling2D
 from keras.preprocessing.image import ImageDataGenerator, array_to_img, img_to_array
-from keras.callbacks import Callback, ModelCheckpoint
+from keras.callbacks import Callback, ModelCheckpoint, EarlyStopping
 
 
 def get_model_nv():
@@ -24,6 +24,7 @@ def get_model_nv():
     model.add(Lambda(lambda x: x/127.5 - 1., input_shape=final_input_shape,output_shape=final_input_shape))
 
     model.add(Convolution2D(24, 5, 5, border_mode='same', init="normal"))
+    #model.add(Convolution2D(24, 5, 5, border_mode='same'))
     model.add(MaxPooling2D(pool_size=(2, 2)))
     model.add(ELU())
 
@@ -51,8 +52,9 @@ def get_model_nv():
     model.add(ELU())
 
     model.add(Dense(1))
-        
-    model.compile(loss='mean_squared_error',optimizer='adam', metrics=['accuracy'])
+
+    model.compile(loss='mean_squared_error',optimizer=Adam(lr=0.0001), metrics=['accuracy'])       
+    #model.compile(loss='mean_squared_error',optimizer='adam')
     #model.evaluate(np.asarray([np.zeros((10))]), np.asarray([np.zeros((20))]))
     return model
 
@@ -73,7 +75,8 @@ def get_model_ca():
     model.add(ELU())
     model.add(Dense(1))
     
-    model.compile(loss='mse',optimizer='sgd',metrics=['accuracy'])
+    model.compile(loss='mean_squared_error',optimizer=Adam(lr=0.0001), metrics=['accuracy'])   
+    #model.compile(loss='mse',optimizer='sgd',metrics=['accuracy'])
     
     return model
 
@@ -122,7 +125,6 @@ def load_csv():
     #print("called load_csv")
     
     for i in range(0,len(filenames)):
-        print(filenames[i], len(image_paths))
         with open(path+filenames[i], 'r') as f:
             reader = csv.reader(f)
             next(reader, None) 
@@ -130,17 +132,18 @@ def load_csv():
             index = 0
             for row in reader:
                image_paths.append(row[0])
-               steering_angles.append(round(float(row[3]),3))
+               steering_angles.append(float(row[3])) 
                index+=1
-    print("total===============", len(image_paths))
+
     return image_paths, steering_angles
+
 
 def data_generator(image_paths, steering_angles, batch_size=1):
     print("called data_generator")
     print("================")
     image_paths, steering_angles = shuffle_lists(image_paths, steering_angles)
     while True:
-       for i in range(0,total,batch_size):
+       for i in range(0,len(image_paths),batch_size):
            image_paths_s, steering_angles_s = shuffle_lists(image_paths[i:i+batch_size], steering_angles[i:i+batch_size])
            X,y = load_data(image_paths_s, steering_angles_s)
            yield (X, y)
@@ -153,6 +156,17 @@ def validation_data_generator(image_paths, steering_angles):
       
     return X, y 
 
+# Callbacks -----------------------------
+# Keras EarlyStopping callback (https://github.com/fchollet/keras/blob/master/keras/callbacks.py#L319)
+# Stop training when a 'val_loss' has stopped improving
+stop_callback = EarlyStopping(monitor='val_loss', min_delta=0, patience=2, verbose=1, mode='auto')
+
+# Keras ModelCheckpoint callback (https://github.com/fchollet/keras/blob/master/keras/callbacks.py#L220)
+# Save the model after every epoch
+filepath = "weights-improvement.{epoch:02d}-{val_loss:.2f}.hdf"
+checkpoint_callback = ModelCheckpoint(filepath, monitor='val_loss', verbose=1, save_best_only=True, save_weights_only=False, mode='auto')
+
+
 class TestCallback(Callback):
     def __init__(self, test_data):
         self.test_data = test_data
@@ -162,128 +176,145 @@ class TestCallback(Callback):
         loss, acc = self.model.evaluate(x, y, verbose=1)
         print('\nValidation loss: {}, acc: {}\n'.format(loss, acc))          
 
+
 def load_data(image_paths, steering_angles):
    
     x = []
     y = []
     
     shape = imread(path+image_paths[0]).shape
+    try:    
+        for i in range(0,len(image_paths)):
+            img = imread(path+image_paths[i])
+            #Image.fromarray(img).save("{}a_original.jpg".format(i))
+            #img2 = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
         
-    for i in range(0,len(image_paths)):
-        img = imread(path+image_paths[i])
-        #img2 = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-        
-        if(imgsize != shape):#resize if image size is not per your liking
-        #print("Resizing image")
-            img = cv2.resize(img,(imgsize[1],imgsize[0]))
+            #resize
+            if(imgsize != shape):
+                img = cv2.resize(img,(imgsize[1],imgsize[0]))
+                #Image.fromarray(img).save("{}b_resized.jpg".format(i))
             
-        imgarr = img_to_array(img)
+                
+            imgarr = img_to_array(img)
         
-        #crop image if needed
-        if(crop_s > 0 and crop_e > 0):
-            imgarr = imgarr[crop_s:crop_e:, :, :]
+            ##crop image if needed
+            if(crop_s > 0 and crop_e > 0):
+                imgarr = imgarr[crop_s:crop_e:, :, :]
+                #array_to_img(imgarr).save("{}c_cropped.jpg".format(i))
+            
+            #do greyscale
+            imgarr = imgarr[...,2,None]
+
+            x.append(imgarr)
+            y.append(steering_angles[i])
+
+
+            #rotate
+            rot = imgarr[:, ::-1, :].astype(np.float32)
+            x.append(rot)
+            y.append(-steering_angles[i])
+            #array_to_img(rot).save("{}d_rotated.jpg".format(i))
+
+
+            im = array_to_img(imgarr)
+
+            #increase sharpness
+            im_sh = ImageEnhance.Sharpness(im).enhance(2.0)
+            im_sh = img_to_array(im_sh)
+            x.append(im_sh)
+            y.append(steering_angles[i])
+            #array_to_img(im_sh).save("{}e_sharper.jpg".format(i))
+
+            #decrease contrast
+            #im_cr = ImageEnhance.Contrast(im).enhance(0.2)
+            #im_cr = img_to_array(im_cr)
+            #x.append(im_cr)
+            #y.append(steering_angles[i])
+            #array_to_img(im_cr).save("{}f_duller.jpg".format(i))
+
+            #decrease brightness
+            #im_br = ImageEnhance.Brightness(im).enhance(0.1)
+            #im_br = img_to_array(im_br)
+            #x.append(im_br)
+            #y.append(steering_angles[i])
+            #array_to_img(im_br).save("{}g_darker.jpg".format(i))
+
+
+            #decrease color
+            #im_col = ImageEnhance.Color(im).enhance(0.2)
+            #im_col = img_to_array(im_col)
+            #x.append(im_col)
+            #y.append(steering_angles[i])
+            #array_to_img(im_col).save("{}h_decolored.jpg".format(i))
         
-        x.append(imgarr)
-        y.append(steering_angles[i])
 
+            i+=1
+    except:    
+        1+1
 
-        #flip images when road is curved
-        if(abs(steering_angles[i]) > 0.2):
-            #print("flipping image, St angle is ", steering_angles[i])
-            x.append(imgarr[:,::-1,:])
-            #ImageOps.mirror(imgarr)
-            y.append(steering_angles[i]*-1)
-
-
-        im = array_to_img(imgarr)
-
-        # increase sharpness
-        x.append(img_to_array(ImageEnhance.Sharpness(im).enhance(0.5)))
-        y.append(steering_angles[i])
-
-        #decrease contrast
-        #x.append(img_to_array(ImageEnhance.Contrast(im).enhance(0.5)))
-        #y.append(steering_angles[i])
-
-        #decrease brightness
-        x.append(img_to_array(ImageEnhance.Brightness(im).enhance(0.5)))
-        y.append(steering_angles[i])
-
-        #decrease color
-        x.append(img_to_array(ImageEnhance.Color(im).enhance(0.5)))
-        y.append(steering_angles[i])
-        
-
-        i+=1
-        
-        
     return np.array(x), np.array(y)   
-               
+       
+
+
+        
 # run the training process
 path = "data/"
-filenames = ["driving_log.csv","driving_log2.csv"]
-model_name = "iter15548nv"
 
-#Org - 160x320x3
-imgsize = (160,320,3)
+filenames = ["driving_log.csv", "left_corr.csv", "right_corr.csv"]
+model_name = "2" # blur, 80%, adam lr 0.0001 , batch_size = 30, e = 20, init normal, nv/ca, grayscale image 27765
 
+#Org - 160x320x3 
+#imgsize = (160,320,3)
+    
 #resize - 80% 
 #imgsize = (128,256,3)
+#final_input_shape = (128,256,3)
+
 
 #resize - 60% 
-#imgsize = (96,192,3)
+imgsize = (96,192,3)
 
+#resize - 40% 
+#imgsize = (64,128,3)
+#final_input_shape = (64,128,3)
 
-#crop - 72x256x3
-#crop - 56x192x3
-crop_s = 40
-crop_e = 112
 
 #crop_s = 0
 #crop_e = 0
 
+#crop - 72x256x3
+#imgsize = (160,320,3)
 
-#final
-#final_input_shape = (160,320,3)
-final_input_shape = (72,320,3)
-#final_input_shape = (56,192,3)
+crop_s = 30
+crop_e = 120
+
+    
+#final_input_shape = (72,256,1)
+#final_input_shape = (96,192,3)
+#final_input_shape = (128,256,3)
+final_input_shape = (66,192,1)
+
+batch_size = 30
+epochs = 100
+
+#model = get_model_nv()
+model = get_model_ca()
 
 
 image_paths, steering_angles = load_csv()
- 
 
 image_paths, steering_angles = shuffle_lists(image_paths, steering_angles)  
-
-split = round(0.20*len(image_paths))
-
+split = round(0.10*len(image_paths))
 X_val = image_paths[0:split]
 y_val = steering_angles[0:split]
-
-
 X_train = image_paths[split:len(image_paths)]
 y_train = steering_angles[split:len(image_paths)]
 
-X_test, y_test = load_data(image_paths[50:60], steering_angles[50:60])
+history = model.fit_generator(data_generator(X_train, y_train, batch_size), samples_per_epoch = len(X_train)*3, nb_epoch = epochs,
+verbose=1, callbacks=[stop_callback, checkpoint_callback], validation_data=validation_data_generator(X_val, y_val), 
+nb_val_samples=len(X_val), class_weight=None, nb_worker=1)
+   
 
-total = len(X_train)
-batch_size = 20
-epochs = 3
-
-model = get_model_nv()
-#model = get_model_ca()
-model.summary()
-
-
-history = model.fit_generator(data_generator(X_train, y_train, batch_size), samples_per_epoch = total*5, nb_epoch = epochs,
-verbose=1, callbacks=[TestCallback((X_test, y_test))], validation_data=validation_data_generator(X_val, y_val), nb_val_samples=len(X_val), class_weight=None, nb_worker=1)
-
-
-# validate
-print(model.predict(X_test))
-
-print("Original values...")
-for i in range(len(y_test)):
-    print(y_test[i])
 
 
 # serialize weights to HDF5
