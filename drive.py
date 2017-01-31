@@ -26,40 +26,11 @@ app = Flask(__name__)
 model = None
 prev_image_array = None
 
-
-#imgsize = (160,320,3)
-#crop_s = 0
-#crop_e = 0
-#final_input_shape = (160,320,3)
-
-#imgsize = (160,320,3)
-#crop_s = 40
-#crop_e = 112
-#final_input_shape = (72,320,3)
-
-#imgsize = (96,192,3)
-#final_input_shape = (96,192,3)
-
-
-#crop_s = 0
-#crop_e = 0
-
-
-#resize - 40% 
-#imgsize = (64,128,3)
-#final_input_shape = (64,128,3)
-
-#imgsize = (128,256,3)
-#crop_s = 40
-#crop_e = 112
-#final_input_shape = (72,256,1)
-
-
-imgsize = (96,192,3)
-crop_s = 30
-crop_e = 120
-final_input_shape = (66,192,1)
-
+imgsize = (32,32,3)
+crop_v_s = 55
+crop_v_e = 135
+crop_h_s = 0
+crop_h_e = 320
 
 @sio.on('telemetry')
 def telemetry(sid, data):
@@ -71,42 +42,18 @@ def telemetry(sid, data):
     speed = data["speed"]
     # The current image from the center camera of the car
     imgString = data["image"]
-    
     image = Image.open(BytesIO(base64.b64decode(imgString)))
-    
-    shape = image.size
+    #print(image.mode)
     image_array = np.asarray(image)
-   
-
-    if(imgsize[1] != shape[0] and imgsize[0] != shape[1]):#resize if image size is not per your liking
-        #print("Resizing image", imgsize[1],shape[0],imgsize[0],shape[1] )
-        image_array = cv2.resize(image_array, (imgsize[1], imgsize[0]))
-        #print("after resize",image_array.shape)
-                
-    #crop if needed    
-    if(crop_s > 0 and crop_e > 0):
-        image_array = image_array[crop_s:crop_e:, :, :]
-        #print("after crop",image_array.shape)
-    else:
-        image_array = image_array
-    
-     #do greyscale
-    image_array = image_array[...,2,None]
-
+    image_array = image_array[crop_v_s:crop_v_e, crop_h_s:crop_h_e]
+    image_array = cv2.resize(image_array, (imgsize[1],imgsize[0]))
+    image_array = image_array.astype(np.float32)
     transformed_image_array = image_array[None, :, :, :]
-        
     # This model currently assumes that the features of the model are just the images. Feel free to change this.
     steering_angle = float(model.predict(transformed_image_array, batch_size=1))
-    
     # The driving model currently just outputs a constant throttle. Feel free to edit this.
     throttle = 0.2
-    print(speed, throttle, steering_angle)
-    
-    #slow down on curves
-    if((abs(steering_angle) > 0.25)):
-        #print("reduce throttle")
-        throttle = 0
-    
+    print(steering_angle, throttle)
     send_control(steering_angle, throttle)
 
 
@@ -115,29 +62,8 @@ def connect(sid, environ):
     print("connect ", sid)
     send_control(0, 0)
 
-s_1=0
-s_2=0
-s_3=0
 
 def send_control(steering_angle, throttle):
-    #global s_1
-    #global s_2
-    #global s_3
-       
-    ##smooth out steering
-    #if(s_3 > 0 and abs(steering_angle-s_3) > 0.1):
-    ##    print(steering_angle)
-    #    st_c = -1*abs((s_1+s_2+s_3)/3)
-    #    print("steering correction old {} - new {}", steering_angle, st_c)
-    #    steering_angle = st_c
-    #    throttle = 0
-  
-
-    #s_1 = s_2
-    #s_2 = s_3
-    #s_3 = steering_angle
-   
-   
     sio.emit("steer", data={
     'steering_angle': steering_angle.__str__(),
     'throttle': throttle.__str__()
